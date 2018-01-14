@@ -107,7 +107,7 @@ struct BBSInfo {
   char mtnc[MTNC_MAX_LENGTH];
 };
 
-#define MAX_CLIENTS 4
+#define MAX_CLIENTS 6
 
 WiFiClient clients[MAX_CLIENTS];
 BBSClient bbsclients[MAX_CLIENTS];
@@ -119,6 +119,7 @@ void persistBBSInfo() {
   if (f) {
     f.write((unsigned char *)&bbsInfo, sizeof(bbsInfo));
     f.close();
+    Serial.println("SPIFFS bbsinfo written.");
   }
 }
 
@@ -140,8 +141,7 @@ void setup() {
   //wifiManager.resetSettings();
   wifiManager.autoConnect();
 
-  Serial.println("Connection established: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("Connection established.");
 
   server.begin();
   Serial.println("Server started: ");
@@ -154,8 +154,6 @@ void sendTextFile(WiFiClient client, String filepath) {
     client.write("File open failed\r\n");
     Serial.println("SPIFFS file open failed");
   } else {
-    Serial.println("Sending text file: ");
-    Serial.println(filepath);
     size_t size = f.size();
     if ( size > 0 ) {
       char buf[32];
@@ -416,7 +414,6 @@ void loop() {
     if (clients[i]) {
       if (clients[i].status() == CLOSED) {
         clients[i].stop();
-        Serial.println("Client disconnected.");
       } else {
         switch (bbsclients[i].action) {
           case BBS_LOGIN:
@@ -453,7 +450,6 @@ void loop() {
                     // clear input
                     discardInput(i);
                   } else {
-                    Serial.println("BBS_LOGIN_USERNAME");
                     cprintf(i, "Node #%u - Username: ", i);
                     getInput(i);
                   }
@@ -478,7 +474,6 @@ void loop() {
                     }
                     action(i, valid ? BBS_MTNC : BBS_LOGIN);
                   } else {
-                    Serial.println("BBS_LOGIN_PASSWORD");
                     cprintf(i, "Password: ");
                     getInput(i, '*');
                   }
@@ -628,7 +623,6 @@ void loop() {
 
                               action(i, BBS_FILES);
                             } else {
-
                               ((BBSFileClient *)(bbsclients[i].data))->f = SPIFFS.open(dir.fileName(), "r");
                               ((BBSFileClient *)(bbsclients[i].data))->bufferPosition = 0;
                               ((BBSFileClient *)(bbsclients[i].data))->bufferUsed = 0;
@@ -715,14 +709,23 @@ void loop() {
                 if (!bbsclients[i].inputting) {
                   if (hasInput(i)) {
                     if (strcmp(bbsclients[i].input, "exit") != 0) {
-                      cprintf(bbsclients[i].chatbuddy, "\r\nNode #%u %s says:\r\n%s\r\n", i, bbsclients[i].user.username, bbsclients[i].input);
-                      discardInput(i);
-                      action(i, BBS_NCHAT, BBS_NCHAT_SEND);
+                      if (bbsclients[i].chatbuddy == 99) {
+                        for (int j = 0; j < MAX_CLIENTS; j++) {
+                          if (clients[j]) {
+                            cprintf(j, "\r\n#%u %s says: %s\r\n", i, bbsclients[i].user.username, bbsclients[i].input);
+                          }
+                        }
+                        discardInput(i);
+                        action(i, BBS_NCHAT, BBS_NCHAT_SEND);
+                      } else {
+                        cprintf(bbsclients[i].chatbuddy, "\r\n#%u %s says: %s\r\n", i, bbsclients[i].user.username, bbsclients[i].input);
+                        discardInput(i);
+                        action(i, BBS_NCHAT, BBS_NCHAT_SEND);
+                      }
                     } else {
                       action(i, BBS_MAIN);
                     }
                   } else {
-                    // cprintf(i, "\r\n%s says:\r\n", bbsclients[i].user.username);
                     getInput(i);
                   }
                 }
@@ -730,19 +733,25 @@ void loop() {
               case BBS_NCHAT_SELECT:
                 if (!bbsclients[i].inputting) {
                   if (hasInput(i)) {
-                    bbsclients[i].chatbuddy = bbsclients[i].input[0] - 48;
-                    if (!clients[bbsclients[i].chatbuddy]) {
-                      cprintf(i, "\r\nNo caller at node %d, please select a different node!\r\n", bbsclients[i].chatbuddy);
-                      discardInput(i);
-                      action(i, BBS_NCHAT, BBS_NCHAT_SELECT);
-                      break;
-                    } else {
+                    if (strcmp(bbsclients[i].input, "all") == 0) {
+                      bbsclients[i].chatbuddy = 99;
                       cprintf(i, "What would you like to say?\r\n(Max. %u characters; type 'exit' to quit)\r\n", MTNC_MAX_LENGTH);
                       action(i, BBS_NCHAT, BBS_NCHAT_SEND);
+                    } else {
+                      bbsclients[i].chatbuddy = bbsclients[i].input[0] - 48;
+                      if (!clients[bbsclients[i].chatbuddy]) {
+                        cprintf(i, "\r\nNo caller at node %d, please select a different node!\r\n", bbsclients[i].chatbuddy);
+                        discardInput(i);
+                        action(i, BBS_NCHAT, BBS_NCHAT_SELECT);
+                        break;
+                      } else {
+                        cprintf(i, "What would you like to say?\r\n(Max. %u characters; type 'exit' to quit)\r\n", MTNC_MAX_LENGTH);
+                        action(i, BBS_NCHAT, BBS_NCHAT_SEND);
+                      }
                     }
                   } else {
                     cprintf(i, "\r\n---- Node Chat ----\r\n\r\n");
-                    cprintf(i, "Which Node would you like to chat with? (0-%d)\r\n", MAX_CLIENTS - 1);
+                    cprintf(i, "Which Node would you like to chat with? (0-%d or all)\r\n", MAX_CLIENTS - 1);
                     getInput(i);
                   }
                 }
@@ -792,7 +801,6 @@ void loop() {
           case BBS_LOGOUT:
             cprintf(i, "\r\nNO CARRIER\r\n\r\n");
             clients[i].stop();
-            Serial.println("Client disconnected.");
             break;
           case BBS_PAUSE:
             if (!bbsclients[i].inputting) {
@@ -853,7 +861,6 @@ void loop() {
       if (clients[i]) {
         digitalWrite(CONNECT_INDICATOR_PIN, HIGH);
         connectIndicatorMillis = millis();
-        Serial.println("Client connected... ");
         // Send telnet configuration - we'll handle echoes, and we do not want to be in linemode.
         clients[i].write(255); // IAC
         clients[i].write(251); // WILL
@@ -877,7 +884,6 @@ void loop() {
         bbsclients[i].stage = STAGE_INIT;
         bbsclients[i].data = (void *)NULL;
         strcpy(bbsclients[i].user.username, "Logging in...");
-        Serial.println("Client logging in... ");
         // Send the title file
         sendTextFile(clients[i], "/title.ans");
 
@@ -899,7 +905,6 @@ void loop() {
     sprintf(buf, "All nodes are currently in use.\r\n");
     client.write((uint8_t *)buf, strlen(buf));
     client.stop();
-    Serial.println("Client disconnected.");
   }
 
   // reset connect indicator pin
@@ -910,3 +915,4 @@ void loop() {
   // Let ESP8266 do some stuff
   yield();
 }
+
